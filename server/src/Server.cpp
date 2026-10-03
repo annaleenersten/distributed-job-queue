@@ -235,6 +235,10 @@ void Server::start() {
 
 void Server::stop() {
     running = false;
+
+    if (jobQueue != nullptr) {
+        job_queue_shutdown(jobQueue);
+    }
 }
 
 void Server::workerLoop() {
@@ -242,9 +246,5 @@ void Server::workerLoop() {
         if (jobQueue != nullptr) {
             job_queue_process_one(jobQueue);
         }
-
-        std::this_thread::sleep_for(
-            std::chrono::milliseconds(100)
-        );
     }
 }

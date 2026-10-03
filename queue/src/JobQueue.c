@@ -11,6 +11,8 @@ struct JobQueueSystem {
     JobQueue queue;
     JobStore store;
     pthread_mutex_t mutex;
+    pthread_cond_t condition;
+    int shutting_down;
 };
 
 JobQueueSystem *job_queue_create(void)
@@ -29,6 +31,14 @@ JobQueueSystem *job_queue_create(void)
         return NULL;
     }
 
+    if (pthread_cond_init(&system->condition, NULL) != 0) {
+        pthread_mutex_destroy(&system->mutex);
+        free(system);
+        return NULL;
+    }
+
+    system->shutting_down = 0;
+
     return system;
 }
 
@@ -41,6 +51,7 @@ void job_queue_destroy(JobQueueSystem *system)
     queue_destroy(&system->queue);
     job_store_destroy(&system->store);
 
+    pthread_cond_destroy(&system->condition);
     pthread_mutex_destroy(&system->mutex);
 
     free(system);
@@ -75,6 +86,8 @@ int job_queue_submit(
         pthread_mutex_unlock(&system->mutex);
         return 0;
     }
+
+    pthread_cond_signal(&system->condition);
 
     pthread_mutex_unlock(&system->mutex);
 
@@ -121,10 +134,16 @@ int job_queue_process_one(JobQueueSystem *system)
      */
     pthread_mutex_lock(&system->mutex);
 
-    if (!queue_dequeue(&system->queue, &job)) {
+    while (queue_is_empty(&system->queue) && !system->shutting_down) {
+        pthread_cond_wait(&system->condition, &system->mutex);
+    }
+
+    if (system->shutting_down && queue_is_empty(&system->queue)) {
         pthread_mutex_unlock(&system->mutex);
         return 0;
     }
+
+    queue_dequeue(&system->queue, &job);
 
     if (!job_store_update_status(
             &system->store,
@@ -170,4 +189,19 @@ int job_queue_process_one(JobQueueSystem *system)
     }
 
     return 1;
+}
+
+void job_queue_shutdown(JobQueueSystem *system)
+{
+    if (system == NULL) {
+        return;
+    }
+
+    pthread_mutex_lock(&system->mutex);
+
+    system->shutting_down = 1;
+
+    pthread_cond_broadcast(&system->condition);
+
+    pthread_mutex_unlock(&system->mutex);
 }

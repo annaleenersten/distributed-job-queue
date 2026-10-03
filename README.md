@@ -4,12 +4,17 @@ A job queue system built in C that combines a FIFO job queue and process-based w
 
 The C++ HTTP server in this project was originally developed as a standalone project (https://github.com/annaleenersten/cpp-concurrent-server) and has been incorporated here as the server component of the distributed job queue system. This repository extends it with the C-based job queue and worker system.
 
-## Current Features
+## Features
 
-- C-based job queue with job storage and status tracking
-- C++ HTTP server for submitting jobs
-- Background worker for job execution
+- C-based FIFO job queue with job storage and status tracking
+- Job creation with unique IDs
+- Background worker for asynchronous job execution
 - Thread-safe access to the job queue and job store
+- Condition variable for efficient worker synchronization
+- Process-based job execution using `fork()`, `exec()`, and `waitpid()`
+- Job completion and failure tracking
+- Graceful worker shutdown
+- C++ HTTP server for submitting jobs
 - Unit tests for the queue and server components
 - Integration tests for HTTP job submission
 
@@ -164,60 +169,3 @@ rm -rf build
 cmake -S . -B build
 cmake --build build
 ```
-
-## Current Features
-
-### Job Queue
-
-* FIFO job queue
-* Job creation and unique IDs
-* Job status tracking
-* In-memory job storage
-* Job submission and retrieval
-* Worker-based job processing
-* Success and failure tracking
-
-### Workers
-
-Workers execute jobs as separate processes using:
-
-```text
-fork()
-exec()
-waitpid()
-```
-
-A job is marked as:
-
-```text
-QUEUED
-   |
-   v
-RUNNING
-   |
-   +----> COMPLETED
-   |
-   +----> FAILED
-```
-
-### HTTP Server
-
-* TCP socket creation and configuration
-* HTTP/1.1 request parsing
-* HTTP response generation
-* Request routing
-* Concurrent client handling
-* Thread pool
-* Thread-safe cache
-* Cache statistics
-* Integration testing
-
-## future additions include:
-
-* Multiple worker processes
-* Job retries
-* Job status endpoints
-* Queue monitoring
-* Performance benchmarking
-* Persistent job storage
-* Additional concurrency testing

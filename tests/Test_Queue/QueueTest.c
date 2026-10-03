@@ -49,12 +49,10 @@ int main(void)
     assert(job_queue_get(system, id2, &job2));
     assert(job2.status == JOB_FAILED);
 
-    // Queue should now be empty.
-    assert(!job_queue_process_one(system));
-
     job_queue_destroy(system);
 
     printf("All queue tests passed!\n");
 
     return 0;
+
 }
