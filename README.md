@@ -4,6 +4,21 @@ A job queue system built in C that combines a FIFO job queue and process-based w
 
 The C++ HTTP server in this project was originally developed as a standalone project (https://github.com/annaleenersten/cpp-concurrent-server) and has been incorporated here as the server component of the distributed job queue system. This repository extends it with the C-based job queue and worker system.
 
+## Current Features
+
+- C-based job queue with job storage and status tracking
+- C++ HTTP server for submitting jobs
+- Background worker for job execution
+- Thread-safe access to the job queue and job store
+- Unit tests for the queue and server components
+- Integration tests for HTTP job submission
+
+### Components
+
+* **Server** — C++ HTTP server using TCP sockets, HTTP request parsing, routing, a thread pool, and a thread-safe cache.
+* **Queue** — C job queue with FIFO scheduling, job storage, worker processing, and job status tracking.
+* **Workers** — Execute jobs using `fork()`, `exec()`, and `waitpid()` and track whether jobs complete or fail.
+
 ## Architecture
 
 ```text
@@ -20,62 +35,6 @@ Worker
      |
      v
 Job Execution
-```
-
-### Components
-
-* **Server** — C++ HTTP server using TCP sockets, HTTP request parsing, routing, a thread pool, and a thread-safe cache.
-* **Queue** — C job queue with FIFO scheduling, job storage, worker processing, and job status tracking.
-* **Workers** — Execute jobs using `fork()`, `exec()`, and `waitpid()` and track whether jobs complete or fail.
-
-## Project Structure
-
-```text
-distributed-job-queue/
-├── CMakeLists.txt
-├── README.md
-│
-├── queue/
-│   ├── include/
-│   │   ├── Job.h
-│   │   ├── Queue.h
-│   │   ├── Worker.h
-│   │   ├── JobStore.h
-│   │   └── JobQueue.h
-│   └── src/
-│       ├── Job.c
-│       ├── Queue.c
-│       ├── Worker.c
-│       ├── JobStore.c
-│       └── JobQueue.c
-│
-├── server/
-│   ├── include/
-│   │   ├── Server.h
-│   │   ├── Router.h
-│   │   ├── HttpRequest.h
-│   │   ├── HttpResponse.h
-│   │   ├── ThreadPool.h
-│   │   └── Cache.h
-│   └── src/
-│       ├── main.cpp
-│       ├── Server.cpp
-│       ├── Router.cpp
-│       ├── HttpRequest.cpp
-│       ├── HttpResponse.cpp
-│       ├── ThreadPool.cpp
-│       └── Cache.cpp
-│
-└── tests/
-    ├── Test_Queue/
-    │   └── QueueTest.c
-    └── Test_Server/
-        ├── CacheTest.cpp
-        ├── HttpRequestTest.cpp
-        ├── HttpResponseTest.cpp
-        ├── RouterTest.cpp
-        ├── ThreadPoolTest.cpp
-        └── ServerIntegrationTest.cpp
 ```
 
 ## Requirements

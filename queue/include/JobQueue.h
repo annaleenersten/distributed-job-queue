@@ -10,7 +10,6 @@ extern "C" {
 typedef struct JobQueueSystem JobQueueSystem;
 
 JobQueueSystem *job_queue_create(void);
-
 void job_queue_destroy(JobQueueSystem *system);
 
 int job_queue_submit(
@@ -18,19 +17,10 @@ int job_queue_submit(
     const char *command
 );
 
-Job *job_queue_get(
+int job_queue_get(
     JobQueueSystem *system,
-    int job_id
-);
-
-int job_queue_get_status(
-    JobQueueSystem *system,
-    int job_id
-);
-
-const char *job_queue_get_command(
-    JobQueueSystem *system,
-    int job_id
+    int job_id,
+    Job *job
 );
 
 int job_queue_process_one(

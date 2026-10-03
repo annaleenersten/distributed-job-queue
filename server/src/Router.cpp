@@ -150,6 +150,51 @@ HttpResponse Router::route(const HttpRequest& request) const {
         );
     }
 
+    if (request.getPath() == "/jobs") {
+        if (request.getMethod() != "POST") {
+            return HttpResponse(
+                405,
+                "Method Not Allowed",
+                "Method not allowed"
+            );
+        }
+
+        if (jobQueue == nullptr) {
+            return HttpResponse(
+                500,
+                "Internal Server Error",
+                "Job queue is not available"
+            );
+        }
+
+        if (request.getBody().empty()) {
+            return HttpResponse(
+                400,
+                "Bad Request",
+                "Job command cannot be empty"
+            );
+        }
+
+        int jobId = job_queue_submit(
+            jobQueue,
+            request.getBody().c_str()
+        );
+
+        if (jobId == 0) {
+            return HttpResponse(
+                500,
+                "Internal Server Error",
+                "Failed to submit job"
+            );
+        }
+
+        return HttpResponse(
+            201,
+            "Created",
+            "Job submitted: " + std::to_string(jobId)
+        );
+    }
+
     return HttpResponse(
         404,
         "Not Found",

@@ -30,6 +30,11 @@ target_include_directories(job_queue PUBLIC
     queue/include
 )
 
+find_package(Threads REQUIRED)
+
+target_link_libraries(job_queue PUBLIC
+    Threads::Threads
+)
 
 # -------------------------
 # HTTP Server

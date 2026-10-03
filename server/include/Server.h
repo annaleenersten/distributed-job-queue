@@ -5,6 +5,8 @@
 #include "JobQueue.h"
 
 #include <atomic>
+#include <thread>
+#include <chrono>
 
 class Server {
 public:
@@ -13,9 +15,11 @@ public:
 
 private:
     void handleClient(int clientSocket);
+    void workerLoop();
 
     ThreadPool threadPool{4};
     Cache cache{1000};
     JobQueueSystem* jobQueue{nullptr};
+    std::thread workerThread;
     std::atomic<bool> running{true};
 };

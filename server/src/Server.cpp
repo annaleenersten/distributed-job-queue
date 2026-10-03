@@ -135,6 +135,8 @@ void Server::start() {
         return;
     }
 
+    workerThread = std::thread(&Server::workerLoop, this);
+
     // Create a TCP socket
     int serverSocket = socket(AF_INET, SOCK_STREAM, 0);
 
@@ -223,10 +225,26 @@ void Server::start() {
 
     close(serverSocket);
 
+    if (workerThread.joinable()) {
+        workerThread.join();
+    }
+
     job_queue_destroy(jobQueue);
     jobQueue = nullptr;
 }
 
 void Server::stop() {
     running = false;
+}
+
+void Server::workerLoop() {
+    while (running) {
+        if (jobQueue != nullptr) {
+            job_queue_process_one(jobQueue);
+        }
+
+        std::this_thread::sleep_for(
+            std::chrono::milliseconds(100)
+        );
+    }
 }
