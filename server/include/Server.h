@@ -17,9 +17,12 @@ private:
     void handleClient(int clientSocket);
     void workerLoop();
 
-    ThreadPool threadPool{4};
+    std::atomic<bool> running{true};
     Cache cache{1000};
     JobQueueSystem* jobQueue{nullptr};
-    std::thread workerThread;
-    std::atomic<bool> running{true};
+
+    ThreadPool threadPool{4};
+
+    std::vector<std::thread> workerThreads;
+    static constexpr int WORKER_COUNT = 3;  
 };

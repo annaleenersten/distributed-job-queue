@@ -135,7 +135,9 @@ void Server::start() {
         return;
     }
 
-    workerThread = std::thread(&Server::workerLoop, this);
+    for (int i = 0; i < WORKER_COUNT; i++) {
+        workerThreads.emplace_back(&Server::workerLoop, this);
+    }
 
     // Create a TCP socket
     int serverSocket = socket(AF_INET, SOCK_STREAM, 0);
@@ -225,8 +227,10 @@ void Server::start() {
 
     close(serverSocket);
 
-    if (workerThread.joinable()) {
-        workerThread.join();
+    for (auto& worker : workerThreads) {
+        if (worker.joinable()) {
+            worker.join();
+        }
     }
 
     job_queue_destroy(jobQueue);

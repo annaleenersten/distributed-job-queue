@@ -1,56 +1,174 @@
 # Distributed Job Queue
 
-A job queue system built in C that combines a FIFO job queue and process-based workers with a concurrent HTTP server.
+A job queue system built in C that accepts jobs through an HTTP server, queues them for processing, and executes multiple jobs concurrently using a pool of background workers.
 
-The C++ HTTP server in this project was originally developed as a standalone project (https://github.com/annaleenersten/cpp-concurrent-server) and has been incorporated here as the server component of the distributed job queue system. This repository extends it with the C-based job queue and worker system.
+The project combines a thread-safe C job queue with a concurrent C++ HTTP server. The HTTP server was originally developed as a standalone project, (https://github.com/annaleenersten/cpp-concurrent-server), and is incorporated here as the interface for submitting jobs. This project extends the server with job scheduling, worker processes, job status tracking, and concurrent job execution.
 
 ## Features
 
-- C-based FIFO job queue with job storage and status tracking
-- Job creation with unique IDs
-- Background worker for asynchronous job execution
-- Thread-safe access to the job queue and job store
-- Condition variable for efficient worker synchronization
-- Process-based job execution using `fork()`, `exec()`, and `waitpid()`
-- Job completion and failure tracking
-- Graceful worker shutdown
-- C++ HTTP server for submitting jobs
-- Unit tests for the queue and server components
-- Integration tests for HTTP job submission
-
-### Components
-
-* **Server** — C++ HTTP server using TCP sockets, HTTP request parsing, routing, a thread pool, and a thread-safe cache.
-* **Queue** — C job queue with FIFO scheduling, job storage, worker processing, and job status tracking.
-* **Workers** — Execute jobs using `fork()`, `exec()`, and `waitpid()` and track whether jobs complete or fail.
+* **FIFO job queue** for managing submitted work
+* **In-memory job store** for tracking job IDs, commands, and execution status
+* **Three-worker pool** for concurrent job processing
+* **Thread-safe queue and job store** protected by a mutex
+* **Condition variable synchronization** so workers sleep while the queue is empty
+* **Process-based job execution** using `fork()`, `execl()`, and `waitpid()`
+* **Job lifecycle tracking** with `QUEUED`, `RUNNING`, `COMPLETED`, and `FAILED` states
+* **Graceful shutdown** that allows queued jobs to finish before workers exit
+* **Concurrent HTTP server** with a reusable thread pool for handling client requests
+* **Unit and integration tests** for the queue, server, and HTTP job submission
 
 ## Architecture
 
+The system separates **receiving work** from **processing work**.
+
 ```text
-HTTP Client
-     |
-     v
-C++ HTTP Server
-     |
-     v
-Job Queue
-     |
-     v
-Worker
-     |
-     v
-Job Execution
+                         HTTP Clients
+                              |
+                              v
+                    +-------------------+
+                    |   C++ HTTP Server |
+                    +-------------------+
+                              |
+                    HTTP Thread Pool
+                              |
+                              v
+                    +-------------------+
+                    |  Job Queue System |
+                    +-------------------+
+                       |      |      |
+                       |      |      |
+                  JobStore   FIFO   Synchronization
+                             Queue   (Mutex + CV)
+                               |
+                    +----------+----------+
+                    |          |          |
+                    v          v          v
+                 Worker 1   Worker 2   Worker 3
+                    |          |          |
+                    +----------+----------+
+                               |
+                              fork()
+                               |
+                               v
+                       Child Process
+                               |
+                         Execute Command
+                               |
+                               v
+                      COMPLETED / FAILED
 ```
+
+The **HTTP thread pool** handles incoming client requests, while the **job worker pool** processes submitted jobs. The two pools have different responsibilities and operate independently.
+
+When a job is submitted:
+
+1. The HTTP server receives the request.
+2. The request body is used as the job command.
+3. The job is stored in the `JobStore` with a unique ID and `QUEUED` status.
+4. A copy of the job is added to the FIFO queue.
+5. A worker is notified through the condition variable.
+6. An available worker removes the job from the queue and marks it `RUNNING`.
+7. The worker executes the command in a separate child process.
+8. The job is marked `COMPLETED` or `FAILED` after execution.
+
+Because there are three workers, multiple queued jobs can be processed at the same time.
+
+## Components
+
+### Job
+
+Represents a unit of work.
+
+Each job contains:
+
+* Unique job ID
+* Command to execute
+* Current execution status
+
+### Queue
+
+A linked-list FIFO queue used to schedule jobs waiting for a worker.
+
+### JobStore
+
+An in-memory store containing submitted jobs and their current status.
+
+The queue determines **what should be processed next**, while the job store tracks **what has happened to each job**.
+
+### JobQueueSystem
+
+Coordinates the queue, job store, mutex, condition variable, and worker processing.
+
+## Job Lifecycle
+
+```text
+             Submit
+                |
+                v
+             QUEUED
+                |
+                v
+            RUNNING
+             /     \
+            v       v
+      COMPLETED    FAILED
+```
+
+Workers update the job status as it moves through the execution lifecycle.
+
+## Synchronization
+
+The job queue system uses a `pthread_mutex_t` to protect shared queue and job-store state.
+
+Workers follow this general pattern:
+
+```text
+Lock mutex
+    |
+    +-- Remove job from queue
+    +-- Mark job RUNNING
+    |
+Unlock mutex
+    |
+Execute job
+    |
+Lock mutex
+    |
+    +-- Mark job COMPLETED or FAILED
+    |
+Unlock mutex
+```
+
+The mutex is only held while accessing shared state, so workers do not block each other while a job is actually executing.
+
+A condition variable allows workers to wait efficiently when there are no jobs available instead of continuously polling the queue.
+
+## Job Execution
+
+Each job is executed in a separate child process.
+
+```text
+Worker
+  |
+  +-- fork()
+       |
+       +-- Child → execl() → execute command
+       |
+       +-- Parent → waitpid() → collect result
+```
+
+The current implementation executes commands through `/bin/sh`, making this project suitable as a local systems-programming prototype rather than a publicly exposed job execution service.
 
 ## Requirements
 
 * CMake 3.16 or newer
-* GCC/G++
-* C17
-* C++17
-* Linux or WSL
+* C compiler with C17 support
+* C++ compiler with C++17 support
+* POSIX-compatible operating system
+* pthreads
+* GoogleTest (downloaded automatically by CMake)
 
-GoogleTest is downloaded automatically by CMake when configuring the project.
+The worker implementation uses POSIX APIs including `fork()`, `execl()`, and `waitpid()`, so the project is intended for Linux or another POSIX-compatible environment.
 
 ## Build
 
@@ -61,18 +179,9 @@ cmake -S . -B build
 cmake --build build
 ```
 
-This creates the main server and test executables in the `build/` directory:
-
-```text
-build/
-├── server
-├── server_tests
-└── queue_tests
-```
-
 ## Run the Server
 
-Start the server with:
+From the project root:
 
 ```bash
 ./build/server
@@ -80,92 +189,134 @@ Start the server with:
 
 The server listens on port `8080`.
 
-You should see:
+Keep the server running while running the HTTP integration tests.
 
-```text
-Server listening on port 8080...
+## Submit a Job
+
+Jobs are submitted using an HTTP `POST` request to `/jobs`.
+
+For example:
+
+```bash
+curl -X POST http://localhost:8080/jobs -d "echo hello"
 ```
 
-Keep the server running while using the integration tests.
+The server creates a job, adds it to the queue, and returns the assigned job ID.
 
-Press `Ctrl+C` to stop the server.
+The worker pool then processes the job in the background.
 
-## Run Queue Tests
+Example output:
 
-The queue tests do not require the HTTP server to be running.
+```text
+Worker processing job 1: echo hello
+hello
+Job 1 completed.
+```
 
-Run:
+### Concurrent Jobs
+
+Multiple long-running jobs can be submitted to demonstrate concurrent processing:
+
+```bash
+curl -X POST http://localhost:8080/jobs -d "sleep 5" &
+curl -X POST http://localhost:8080/jobs -d "sleep 5" &
+curl -X POST http://localhost:8080/jobs -d "sleep 5" &
+```
+
+With three workers, the jobs can execute concurrently rather than waiting for each previous job to finish.
+
+## Run Tests
+
+### Queue Tests
+
+From the project root:
 
 ```bash
 ./build/queue_tests
 ```
 
-A successful run should print:
+### Server Tests
 
-```text
-All queue tests passed!
+```bash
+./build/server_tests
 ```
 
-## Run Server Tests
+Server tests include unit tests for:
 
-The server tests include unit tests and integration tests.
-
-### Unit Tests
-
-The unit tests cover:
-
-* Cache
 * HTTP request parsing
 * HTTP response generation
 * Routing
-* Thread pool
+* Thread pool behavior
+* Cache functionality
 
-These tests can run without starting the server.
+The server integration tests verify HTTP communication with the running server.
 
-### Integration Tests
-
-`ServerIntegrationTest.cpp` connects to the running HTTP server on port `8080`.
-
-**The server must already be running before running the integration tests.**
-
-In one terminal:
-
-```bash
-./build/server
-```
-
-Then, in a second terminal:
+### All Tests
 
 ```bash
 cd build
 ctest --output-on-failure
 ```
-
-If the server is not running, the integration tests that connect to port `8080` will fail.
-
-## Run All Tests
-
-Start the server first:
-
-```bash
-./build/server
-```
-
-Then open another terminal and run:
-
-```bash
-cd build
-ctest --output-on-failure
-```
-
-This runs the C queue tests and the C++ server tests through CTest.
 
 ## Clean Build
 
-To remove the existing build directory and configure the project from scratch:
+To remove the existing build and create a fresh build:
 
 ```bash
 rm -rf build
 cmake -S . -B build
 cmake --build build
+```
+
+## Project Structure
+
+```text
+distributed-job-queue/
+├── CMakeLists.txt
+├── README.md
+│
+├── queue/
+│   ├── include/
+│   │   ├── Job.h
+│   │   ├── Queue.h
+│   │   ├── Worker.h
+│   │   ├── JobStore.h
+│   │   └── JobQueue.h
+│   │
+│   └── src/
+│       ├── Job.c
+│       ├── Queue.c
+│       ├── Worker.c
+│       ├── JobStore.c
+│       └── JobQueue.c
+│
+├── server/
+│   ├── include/
+│   │   ├── Server.h
+│   │   ├── Router.h
+│   │   ├── HttpRequest.h
+│   │   ├── HttpResponse.h
+│   │   ├── ThreadPool.h
+│   │   └── Cache.h
+│   │
+│   └── src/
+│       ├── main.cpp
+│       ├── Server.cpp
+│       ├── Router.cpp
+│       ├── HttpRequest.cpp
+│       ├── HttpResponse.cpp
+│       ├── ThreadPool.cpp
+│       └── Cache.cpp
+│
+└── tests/
+    ├── Test_Queue/
+    │   └── QueueTest.c
+    │
+    └── Test_Server/
+        ├── CacheTest.cpp
+        ├── HttpRequestTest.cpp
+        ├── HttpResponseTest.cpp
+        ├── RouterTest.cpp
+        ├── ThreadPoolTest.cpp
+        └── ServerIntegrationTest.cpp
 ```
