@@ -1,14 +1,14 @@
 # Distributed Job Queue
 
-A job queue system built in C that accepts jobs through an HTTP server, queues them for processing, and executes multiple jobs concurrently using a pool of background workers.
+A job queue system with an HTTP server that persists submitted jobs in PostgreSQL, plus a separate C in-memory queue and worker pool for local processing.
 
 The project combines a thread-safe C job queue with a C++ HTTP server (https://github.com/annaleenersten/cpp-concurrent-server) for submitting and tracking jobs.
 
 ## Features
 
-* FIFO job queue for managing submitted work
-* In-memory job store with job status tracking
-* Three-worker processing pool for concurrent job execution
+* FIFO in-memory queue and worker pool for local queue processing
+* PostgreSQL persistence for submitted jobs
+* In-memory job store (separate from PostgreSQL job records)
 * Thread-safe queue and job store using POSIX mutexes
 * Condition variables for worker synchronization
 * Process-based job execution using `fork()`, `execl()`, and `waitpid()`
@@ -28,7 +28,14 @@ C++ HTTP Server
     v
 HTTP Thread Pool
     |
-    v
+    +---- POST /jobs → PostgreSQL
+    |
+    +---- Cache routes
+```
+
+The in-memory queue library and worker pool are still available for local queue tests and are not connected to the HTTP submission path:
+
+```text
 C Job Queue
     |
     +---- Job Store
@@ -46,9 +53,9 @@ Worker Pool
 fork() → execute command
 ```
 
-The HTTP thread pool handles incoming requests, while the worker pool processes queued jobs independently.
+The HTTP thread pool handles incoming requests. The current `/jobs` route inserts jobs into PostgreSQL and returns the generated database ID. The in-memory workers do not claim or execute those database jobs yet.
 
-Each worker waits for available work using a condition variable, removes jobs from the FIFO queue, and executes them in a separate child process. Shared queue and job state are protected by a mutex.
+Each in-memory worker waits for available work using a condition variable, removes jobs from the FIFO queue, and executes them in a separate child process. Shared queue and job state are protected by a mutex.
 
 ## Job Lifecycle
 
@@ -57,6 +64,8 @@ QUEUED → RUNNING → COMPLETED
                   ↘ FAILED
 ```
 
+This lifecycle currently applies to the in-memory queue. PostgreSQL submissions remain `QUEUED` until database-backed workers are added.
+
 ## Requirements
 
 * CMake 3.16+
@@ -64,9 +73,18 @@ QUEUED → RUNNING → COMPLETED
 * C++ compiler with C++17 support
 * POSIX-compatible operating system
 * pthreads
+* PostgreSQL client development library (`libpq`)
+* Docker Engine and Docker Compose (for the local PostgreSQL container)
 * GoogleTest
 
 The worker implementation uses POSIX APIs including `fork()`, `execl()`, and `waitpid()`, so the project is intended for Linux or another POSIX-compatible environment.
+
+On Ubuntu or WSL, install the PostgreSQL client development library with:
+
+```bash
+sudo apt update
+sudo apt install libpq-dev
+```
 
 ## Build
 
@@ -75,11 +93,36 @@ cmake -S . -B build
 cmake --build build
 ```
 
+## Start the local database
+
+The Compose file starts a local PostgreSQL database. Start it from the project root:
+
+```bash
+docker compose up -d
+```
+
+Apply the schema to a new database volume:
+
+```bash
+docker compose exec -T db psql -U job_queue -d job_queue < database/schema.sql
+```
+
+You only need to apply the schema when initializing a new database volume (or when applying a schema change). The named `postgres_data` volume keeps database data when the container is stopped and restarted.
+
+Stop the database container when you are finished:
+
+```bash
+docker compose down
+```
+
+This preserves the database volume. To also delete all local database data, use `docker compose down -v`.
+
 ## Run
 
 Start the server:
 
 ```bash
+export DATABASE_URL="host=localhost port=5432 dbname=job_queue user=job_queue password=local_dev_password"
 ./build/server
 ```
 
@@ -91,7 +134,7 @@ Submit a job:
 curl -X POST http://localhost:8080/jobs -d "echo hello"
 ```
 
-The server returns a job ID and adds the job to the queue for background processing.
+The server stores the job in PostgreSQL and returns its database ID. Jobs remain `QUEUED`; database-backed workers that claim and execute them are not implemented yet.
 
 Multiple jobs can be submitted concurrently:
 
@@ -101,7 +144,7 @@ curl -X POST http://localhost:8080/jobs -d "sleep 5" &
 curl -X POST http://localhost:8080/jobs -d "sleep 5" &
 ```
 
-With three workers, the jobs can execute concurrently.
+These requests create persistent database jobs. They are not executed until database-backed workers are implemented.
 
 ## Testing
 

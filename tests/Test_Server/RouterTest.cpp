@@ -226,3 +226,21 @@ TEST(RouterTest, ReturnsCacheStats) {
     EXPECT_EQ(response.getStatusCode(), 200);
     EXPECT_EQ(response.getBody(), "Hits: 0\nMisses: 0");
 }
+
+TEST(RouterTest, ReturnsServerErrorWhenDatabaseIsNotConfigured) {
+    Cache cache{1000};
+    Router router(cache);
+
+    HttpRequest request(
+        "POST /jobs HTTP/1.1\r\n"
+        "Host: localhost\r\n"
+        "Content-Length: 10\r\n"
+        "\r\n"
+        "echo hello"
+    );
+
+    HttpResponse response = router.route(request);
+
+    EXPECT_EQ(response.getStatusCode(), 500);
+    EXPECT_EQ(response.getBody(), "Failed to persist job");
+}

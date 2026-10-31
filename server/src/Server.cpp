@@ -7,6 +7,7 @@
 #include <cstring>
 #include <csignal>
 #include <algorithm>
+#include <cstdlib>
 #include <sys/select.h>
 
 #include <sys/socket.h>
@@ -95,7 +96,7 @@ void Server::handleClient(int clientSocket) {
     std::cout << "Version: " << request.getVersion() << '\n';
 
     // Route request
-    Router router(cache, jobQueue);
+    Router router(cache, databaseConnectionString);
     HttpResponse response = router.route(request);
 
     // Build HTTP response
@@ -128,15 +129,11 @@ void Server::start() {
     serverInstance = this;
     std::signal(SIGINT, handleSignal);
 
-    jobQueue = job_queue_create();
-
-    if (jobQueue == nullptr) {
-        std::cerr << "Failed to create job queue\n";
-        return;
-    }
-
-    for (int i = 0; i < WORKER_COUNT; i++) {
-        workerThreads.emplace_back(&Server::workerLoop, this);
+    const char* connectionString = std::getenv("DATABASE_URL");
+    if (connectionString == nullptr || connectionString[0] == '\0') {
+        std::cerr << "DATABASE_URL is not set; job submissions will fail\n";
+    } else {
+        databaseConnectionString = connectionString;
     }
 
     // Create a TCP socket
@@ -226,29 +223,8 @@ void Server::start() {
     }
 
     close(serverSocket);
-
-    for (auto& worker : workerThreads) {
-        if (worker.joinable()) {
-            worker.join();
-        }
-    }
-
-    job_queue_destroy(jobQueue);
-    jobQueue = nullptr;
 }
 
 void Server::stop() {
     running = false;
-
-    if (jobQueue != nullptr) {
-        job_queue_shutdown(jobQueue);
-    }
-}
-
-void Server::workerLoop() {
-    while (running) {
-        if (jobQueue != nullptr) {
-            job_queue_process_one(jobQueue);
-        }
-    }
 }

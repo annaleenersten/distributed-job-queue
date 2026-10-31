@@ -24,6 +24,7 @@ add_library(job_queue
     queue/src/Worker.c
     queue/src/JobStore.c
     queue/src/JobQueue.c
+    queue/src/JobDatabase.c
 )
 
 target_include_directories(job_queue PUBLIC
@@ -31,9 +32,11 @@ target_include_directories(job_queue PUBLIC
 )
 
 find_package(Threads REQUIRED)
+find_package(PostgreSQL REQUIRED)
 
 target_link_libraries(job_queue PUBLIC
     Threads::Threads
+    PostgreSQL::PostgreSQL
 )
 
 # -------------------------

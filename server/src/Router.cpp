@@ -1,10 +1,14 @@
 #include "Router.h"
+#include "JobDatabase.h"
 
 #include <chrono>
+#include <cstdint>
+#include <iostream>
+#include <utility>
 
-Router::Router(Cache& cache, JobQueueSystem* jobQueue)
+Router::Router(Cache& cache, std::string databaseConnectionString)
     : cache(cache),
-      jobQueue(jobQueue) {
+      databaseConnectionString(std::move(databaseConnectionString)) {
 }
 
 HttpResponse Router::route(const HttpRequest& request) const {
@@ -159,14 +163,6 @@ HttpResponse Router::route(const HttpRequest& request) const {
             );
         }
 
-        if (jobQueue == nullptr) {
-            return HttpResponse(
-                500,
-                "Internal Server Error",
-                "Job queue is not available"
-            );
-        }
-
         if (request.getBody().empty()) {
             return HttpResponse(
                 400,
@@ -175,16 +171,20 @@ HttpResponse Router::route(const HttpRequest& request) const {
             );
         }
 
-        int jobId = job_queue_submit(
-            jobQueue,
-            request.getBody().c_str()
-        );
+        int64_t jobId = 0;
+        char errorMessage[512];
 
-        if (jobId == 0) {
+        if (!job_database_submit(
+                databaseConnectionString.c_str(),
+                request.getBody().c_str(),
+                &jobId,
+                errorMessage,
+                sizeof(errorMessage))) {
+            std::cerr << "Failed to persist job: " << errorMessage << '\n';
             return HttpResponse(
                 500,
                 "Internal Server Error",
-                "Failed to submit job"
+                "Failed to persist job"
             );
         }
 

@@ -3,15 +3,16 @@
 #include "HttpRequest.h"
 #include "HttpResponse.h"
 #include "Cache.h"
-#include "JobQueue.h"
+
+#include <string>
 
 class Router {
 public:
-    Router(Cache& cache, JobQueueSystem* jobQueue = nullptr);
+    Router(Cache& cache, std::string databaseConnectionString = {});
 
     HttpResponse route(const HttpRequest& request) const;
 
 private:
     Cache& cache;
-    JobQueueSystem* jobQueue;
+    std::string databaseConnectionString;
 };
