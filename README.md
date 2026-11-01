@@ -158,3 +158,30 @@ ctest --output-on-failure
 ```
 
 The `ServerIntegrationTest` cases connect to a live server on port `8080`. Start the server in another terminal first (with PostgreSQL configured if you also want to test job submissions). Tests cover the job queue, HTTP routing, thread pool, cache functionality, and HTTP server integration.
+
+## Multi-Machine Test
+
+Several servers can share one PostgreSQL database. Run the database on one machine and start a server on each machine with the same `DATABASE_URL`, pointing at the database host:
+
+```bash
+export DATABASE_URL="host=<database-host-ip> port=5433 dbname=job_queue user=job_queue password=<password>"
+./build/server
+```
+
+The database host must allow inbound connections on port `5433`. Only one machine needs Docker and PostgreSQL.
+
+Submit jobs to each server, then see which worker ran each job:
+
+```bash
+docker compose exec db psql -U job_queue -d job_queue -c "select id, status, last_worker_id from jobs order by id desc;"
+```
+
+`last_worker_id` has the form `<hostname>-<pid>-<worker index>` and is kept after the job finishes.
+
+Verified with two machines sharing one PostgreSQL database: six workers (three per host) claimed and ran six `sleep 5` jobs concurrently, with no duplicate claims.
+
+If your database was created before the `last_worker_id` column was added, add it once:
+
+```bash
+docker compose exec -T db psql -U job_queue -d job_queue -c "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS last_worker_id TEXT;"
+```
