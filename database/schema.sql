@@ -15,6 +15,10 @@ CREATE TABLE IF NOT EXISTS jobs (
     worker_id       TEXT,
     lease_until     TIMESTAMPTZ,
 
+    -- The most recent worker to claim the job (host-pid-index). Unlike
+    -- worker_id, it is kept after the job finishes.
+    last_worker_id  TEXT,
+
     -- Increment attempts each time a worker claims the job.
     attempts        INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
     max_attempts    INTEGER NOT NULL DEFAULT 3 CHECK (max_attempts > 0),

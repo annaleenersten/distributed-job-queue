@@ -218,7 +218,7 @@ int job_database_claim(
         "  LIMIT 1"
         ")"
         "UPDATE jobs AS job"
-        " SET status = 'RUNNING', worker_id = $1,"
+        " SET status = 'RUNNING', worker_id = $1, last_worker_id = $1,"
         "     lease_until = now() + make_interval(secs => $2::double precision),"
         "     started_at = COALESCE(job.started_at, now()),"
         "     finished_at = NULL, attempts = job.attempts + 1,"
