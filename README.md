@@ -2,7 +2,9 @@
 
 A job queue system with an HTTP server that persists submitted jobs in PostgreSQL and a worker pool that claims and executes jobs from the database.
 
-The project combines a thread-safe C job queue with a C++ HTTP server (https://github.com/annaleenersten/cpp-concurrent-server) for submitting and tracking jobs.
+The project combines a thread-safe C job queue ([job-queue](https://github.com/annaleenersten/job-queue)) with a C++ HTTP server ([cpp-concurrent-server](https://github.com/annaleenersten/cpp-concurrent-server)) for submitting and tracking jobs.
+
+This project extends the original in-memory queue by moving job state into PostgreSQL, so multiple server instances on different machines can share one queue.
 
 ## Features
 
