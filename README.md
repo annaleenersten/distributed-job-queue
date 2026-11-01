@@ -1,16 +1,16 @@
 # Distributed Job Queue
 
-A job queue system with an HTTP server that persists submitted jobs in PostgreSQL, plus a separate C in-memory queue and worker pool for local processing.
+A job queue system with an HTTP server that persists submitted jobs in PostgreSQL and a worker pool that claims and executes jobs from the database.
 
 The project combines a thread-safe C job queue with a C++ HTTP server (https://github.com/annaleenersten/cpp-concurrent-server) for submitting and tracking jobs.
 
 ## Features
 
-* FIFO in-memory queue and worker pool for local queue processing
+* Three database-backed workers that claim jobs concurrently
 * PostgreSQL persistence for submitted jobs
-* In-memory job store (separate from PostgreSQL job records)
-* Thread-safe queue and job store using POSIX mutexes
-* Condition variables for worker synchronization
+* Atomic PostgreSQL job claims with `FOR UPDATE SKIP LOCKED`
+* Worker leases, heartbeat renewal, and bounded retries after worker failure
+* C in-memory queue retained for local queue tests
 * Process-based job execution using `fork()`, `execl()`, and `waitpid()`
 * Job lifecycle tracking: `QUEUED`, `RUNNING`, `COMPLETED`, and `FAILED`
 * Graceful shutdown
@@ -33,17 +33,17 @@ HTTP Thread Pool
     +---- Cache routes
 ```
 
-The in-memory queue library and worker pool are still available for local queue tests and are not connected to the HTTP submission path:
+The server starts three workers that poll PostgreSQL and claim available jobs. Each claim sets a worker ID, increments the attempt count, and creates a 90-second lease. Workers renew leases while commands run, then record the exit code and final status. Expired jobs are retried up to `max_attempts`.
 
 ```text
-C Job Queue
+PostgreSQL
     |
-    +---- Job Store
+    +---- QUEUED jobs
     |
-    +---- FIFO Queue
+    +---- atomic claim + lease
     |
     v
-Worker Pool
+Three worker threads
     |
     +---- Worker 1
     +---- Worker 2
@@ -53,9 +53,7 @@ Worker Pool
 fork() → execute command
 ```
 
-The HTTP thread pool handles incoming requests. The current `/jobs` route inserts jobs into PostgreSQL and returns the generated database ID. The in-memory workers do not claim or execute those database jobs yet.
-
-Each in-memory worker waits for available work using a condition variable, removes jobs from the FIFO queue, and executes them in a separate child process. Shared queue and job state are protected by a mutex.
+The HTTP thread pool handles incoming requests. The `/jobs` route inserts jobs into PostgreSQL and returns the generated database ID. The C in-memory queue remains available for local queue tests but is not used by the HTTP server.
 
 ## Job Lifecycle
 
@@ -64,7 +62,7 @@ QUEUED → RUNNING → COMPLETED
                   ↘ FAILED
 ```
 
-This lifecycle currently applies to the in-memory queue. PostgreSQL submissions remain `QUEUED` until database-backed workers are added.
+Database-backed workers update each job through this lifecycle and record its exit code and error details.
 
 ## Requirements
 
@@ -101,6 +99,8 @@ The Compose file starts a local PostgreSQL database. Start it from the project r
 docker compose up -d
 ```
 
+For an existing `postgres_data` volume, PostgreSQL keeps the password set when that volume was first initialized; changing `POSTGRES_PASSWORD` in Compose does not change the database role's password. Make sure `DATABASE_URL` uses the password already configured in the database.
+
 Apply the schema to a new database volume:
 
 ```bash
@@ -122,7 +122,7 @@ This preserves the database volume. To also delete all local database data, use 
 Start the server:
 
 ```bash
-export DATABASE_URL="host=localhost port=5432 dbname=job_queue user=job_queue password=local_dev_password"
+export DATABASE_URL="host=localhost port=5433 dbname=job_queue user=job_queue password=local_dev_password"
 ./build/server
 ```
 
@@ -134,7 +134,7 @@ Submit a job:
 curl -X POST http://localhost:8080/jobs -d "echo hello"
 ```
 
-The server stores the job in PostgreSQL and returns its database ID. Jobs remain `QUEUED`; database-backed workers that claim and execute them are not implemented yet.
+The server stores the job in PostgreSQL and returns its database ID. A database-backed worker claims and executes it, then updates its status.
 
 Multiple jobs can be submitted concurrently:
 
@@ -144,7 +144,7 @@ curl -X POST http://localhost:8080/jobs -d "sleep 5" &
 curl -X POST http://localhost:8080/jobs -d "sleep 5" &
 ```
 
-These requests create persistent database jobs. They are not executed until database-backed workers are implemented.
+These requests create persistent database jobs that the worker pool can execute concurrently.
 
 ## Testing
 
@@ -155,4 +155,4 @@ cd build
 ctest --output-on-failure
 ```
 
-Tests cover the job queue, job store, HTTP server, routing, thread pool, cache functionality, and HTTP job submission.
+The `ServerIntegrationTest` cases connect to a live server on port `8080`. Start the server in another terminal first (with PostgreSQL configured if you also want to test job submissions). Tests cover the job queue, HTTP routing, thread pool, cache functionality, and HTTP server integration.

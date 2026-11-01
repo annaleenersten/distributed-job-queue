@@ -1,4 +1,4 @@
--- Initial PostgreSQL schema for the distributed job queue.
+-- PostgreSQL schema for job storage.
 
 CREATE TABLE IF NOT EXISTS jobs (
     id              BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,

@@ -2,17 +2,56 @@
 #include "HttpRequest.h"
 #include "Router.h"
 #include "HttpResponse.h"
+#include "JobDatabase.h"
+#include "Worker.h"
 
 #include <iostream>
 #include <cstring>
 #include <csignal>
 #include <algorithm>
 #include <cstdlib>
+#include <cstdio>
+#include <chrono>
+#include <cstdint>
+#include <string>
+#include <thread>
 #include <sys/select.h>
 
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <unistd.h>
+
+namespace {
+
+constexpr int JOB_LEASE_SECONDS = 90;
+
+struct JobLeaseContext {
+    const std::string* connectionString;
+    std::string workerId;
+    int64_t jobId;
+};
+
+int renewJobLease(void* context) {
+    auto* lease = static_cast<JobLeaseContext*>(context);
+    char errorMessage[512];
+    int result = job_database_renew_lease(
+        lease->connectionString->c_str(),
+        lease->jobId,
+        lease->workerId.c_str(),
+        JOB_LEASE_SECONDS,
+        errorMessage,
+        sizeof(errorMessage)
+    );
+
+    if (result == JOB_DATABASE_ERROR) {
+        std::cerr << "Failed to renew job " << lease->jobId
+                  << " lease: " << errorMessage << '\n';
+    }
+
+    return result == JOB_DATABASE_LEASE_RENEWED;
+}
+
+}
 
 Server* serverInstance = nullptr;
 
@@ -144,6 +183,18 @@ void Server::start() {
         return;
     }
 
+    int reuseAddress = 1;
+    if (setsockopt(
+            serverSocket,
+            SOL_SOCKET,
+            SO_REUSEADDR,
+            &reuseAddress,
+            sizeof(reuseAddress)) == -1) {
+        std::cerr << "Failed to configure socket address reuse\n";
+        close(serverSocket);
+        return;
+    }
+
     // Configure the server address
     sockaddr_in serverAddress{};
     serverAddress.sin_family = AF_INET;
@@ -166,6 +217,12 @@ void Server::start() {
         std::cerr << "Failed to listen on socket\n";
         close(serverSocket);
         return;
+    }
+
+    if (!databaseConnectionString.empty()) {
+        for (int i = 0; i < WORKER_COUNT; ++i) {
+            workerThreads.emplace_back(&Server::workerLoop, this, i);
+        }
     }
 
     std::cout << "Server listening on port 8080...\n";
@@ -222,9 +279,88 @@ void Server::start() {
         });
     }
 
+    running = false;
     close(serverSocket);
+
+    for (auto& worker : workerThreads) {
+        if (worker.joinable()) {
+            worker.join();
+        }
+    }
 }
 
 void Server::stop() {
     running = false;
+}
+
+void Server::workerLoop(int workerIndex) {
+    char hostname[64] = "worker";
+    if (gethostname(hostname, sizeof(hostname)) == 0) {
+        hostname[sizeof(hostname) - 1] = '\0';
+    }
+
+    const std::string workerId =
+        std::string(hostname) + "-" + std::to_string(getpid()) + "-" +
+        std::to_string(workerIndex);
+
+    while (running) {
+        DatabaseJob job{};
+        char errorMessage[512];
+        int claimResult = job_database_claim(
+            databaseConnectionString.c_str(),
+            workerId.c_str(),
+            JOB_LEASE_SECONDS,
+            &job,
+            errorMessage,
+            sizeof(errorMessage)
+        );
+
+        if (claimResult == JOB_DATABASE_ERROR) {
+            std::cerr << "Worker " << workerId
+                      << " failed to claim a job: " << errorMessage << '\n';
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+            continue;
+        }
+        if (claimResult == JOB_DATABASE_NO_JOB) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(300));
+            continue;
+        }
+
+        JobLeaseContext lease{&databaseConnectionString, workerId, job.id};
+        int exitCode = -1;
+        const int executed = worker_execute_command(
+            job.id,
+            job.command,
+            &exitCode,
+            renewJobLease,
+            &lease
+        );
+
+        std::string errorText;
+        if (!executed) {
+            errorText = "Worker failed or lost its database lease";
+        } else if (exitCode != 0) {
+            errorText = "Command exited with status " + std::to_string(exitCode);
+        }
+
+        char finishError[512];
+        int finishResult = job_database_finish(
+            databaseConnectionString.c_str(),
+            job.id,
+            workerId.c_str(),
+            exitCode,
+            errorText.empty() ? nullptr : errorText.c_str(),
+            finishError,
+            sizeof(finishError)
+        );
+        if (finishResult == JOB_DATABASE_ERROR) {
+            std::cerr << "Worker " << workerId << " failed to finish job "
+                      << job.id << ": " << finishError << '\n';
+        } else if (finishResult == JOB_DATABASE_LEASE_LOST) {
+            std::cerr << "Worker " << workerId
+                      << " no longer owns job " << job.id << '\n';
+        }
+
+        job_database_job_clear(&job);
+    }
 }
